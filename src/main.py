@@ -8,7 +8,11 @@ from flask_swagger import swagger
 from flask_cors import CORS
 from utils import APIException, generate_sitemap
 from models import db
-#from models import Person
+from flask_jwt_simple import (
+    JWTManager, jwt_required, create_jwt, get_jwt_identity
+)
+
+from models import Person
 
 app = Flask(__name__)
 app.url_map.strict_slashes = False
@@ -17,6 +21,69 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 MIGRATE = Migrate(app, db)
 db.init_app(app)
 CORS(app)
+
+# Setup the Flask-JWT-Simple extension
+app.config['JWT_SECRET_KEY'] = 'super-secret'  # Change this!
+jwt = JWTManager(app)
+
+
+# Provide a method to create access tokens. The create_jwt()
+# function is used to actually generate the token
+@app.route('/login', methods=['POST'])
+def login():
+    if not request.is_json:
+        return jsonify({"msg": "Missing JSON in request"}), 400
+
+    params = request.get_json()
+    username = params.get('username', None)
+    email = params.get('email', None)
+
+    if not username:
+        return jsonify({"msg": "Missing username parameter"}), 400
+    if not email:
+        return jsonify({"msg": "Missing email parameter"}), 400
+
+    # if username != 'test' or email != 'test':
+    #     return jsonify({"msg": "Bad username or email"}), 401
+
+    usercheck = Person.query.filter_by(username=username, email=email).first()
+    if usercheck == None:
+      return jsonify({"msg": "Bad username or email"}), 401
+
+    # Identity can be any data that is json serializable
+    ret = {'jwt': create_jwt(identity=username)}
+    return jsonify(ret), 200
+
+@app.route('/person', methods=['POST', 'GET'])
+def handle_person():
+
+    """
+    Create person and retrieve all persons
+    """
+
+    # POST request
+    if request.method == 'POST':
+        body = request.get_json()
+
+        if body is None:
+            raise APIException("You need to specify the request body as a json object", status_code=400)
+        if 'username' not in body:
+            raise APIException('You need to specify the username', status_code=400)
+        if 'email' not in body:
+            raise APIException('You need to specify the email', status_code=400)
+
+        user1 = Person(username=body['username'], email=body['email'])
+        db.session.add(user1)
+        db.session.commit()
+        return "ok", 200
+
+    # GET request
+    if request.method == 'GET':
+        all_people = Person.query.all()
+        all_people = list(map(lambda x: x.serialize(), all_people))
+        return jsonify(all_people), 200
+
+    return "Invalid Method", 404
 
 # Handle/serialize errors like a JSON object
 @app.errorhandler(APIException)
@@ -29,7 +96,8 @@ def sitemap():
     return generate_sitemap(app)
 
 @app.route('/hello', methods=['POST', 'GET'])
-def handle_person():
+@jwt_required
+def handle_hello():
 
     response_body = {
         "hello": "world"
